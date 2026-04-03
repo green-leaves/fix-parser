@@ -5,22 +5,31 @@
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>Fix-parser</name>
+    <name>Fix Parser</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.lasotuvi.app">LasoTuVi</vendor>
+    <vendor url="https://github.com/green-leaves">green-leaves</vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
-    <description>Description of the plugin displayed on the Plugin Page and IDE Plugin Manager</description>
+    <description><![CDATA[
+        <p>A lightweight FIX protocol message parser built into your IDE.</p>
+        <ul>
+            <li>Parse FIX messages by pasting text or loading from a local file</li>
+            <li>Supports FIX 4.0 through 5.0 SP2 dictionaries, plus custom XML dictionaries</li>
+            <li>Auto-detects delimiters (SOH, pipe, tab, etc.)</li>
+            <li>Summary view with message type, sender, target, and timestamp</li>
+            <li>Field-level detail view with tag IDs, names, and values</li>
+            <li>Raw message view for quick inspection</li>
+            <li>All parsing happens locally — no data leaves your machine</li>
+        </ul>
+    ]]></description>
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.compose</depends>
 
     <depends>com.intellij.java</depends>
-    <depends>com.intellij.modules.json</depends>
-    <depends>org.intellij.plugins.markdown</depends>
 <!--    <resource-bundle>messages.MyMessageBundle</resource-bundle>-->
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->

@@ -1,44 +1,45 @@
 package io.hermes.fix.plugin
 
-import org.agrona.collections.Int2ObjectHashMap
 import uk.co.real_logic.artio.dictionary.DictionaryParser
 import uk.co.real_logic.artio.dictionary.ir.Dictionary
 import uk.co.real_logic.artio.dictionary.ir.Field
-import uk.co.real_logic.artio.util.AsciiBuffer
-import uk.co.real_logic.artio.util.MutableAsciiBuffer
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 
 /**
- * Parser for FIX protocol messages using Artio codecs and IR Dictionary.
+ * Parser for FIX protocol messages.
+ * Auto-detects whether Agrona UnsafeBuffer is available (requires --add-opens JVM arg).
+ * Falls back to a high-performance byte-array parser when it's not.
  */
 object FixMessageParser {
 
-    /** Default FIX delimiter */
     const val DEFAULT_DELIMITER = '\u0001'
-
-    /** Alternative delimiters to try */
     private val ALTERNATIVE_DELIMITERS = listOf('|', '\t', '^', ',')
+    private val BEGIN_STRING_REGEX = Regex("8=FIX[0-9.]+")
 
-
-    private var tagNameCache: Int2ObjectHashMap<Field>? = null
-
-    /** Pre-built lookup: (fieldNumber, enumRepresentation) -> description */
+    private var tagNameCache: HashMap<Int, Field>? = null
     private var valueDescriptionCache: HashMap<Long, String>? = null
 
-    /**
-     * Loads a dictionary from an XML stream.
-     */
+    /** Whether Agrona UnsafeBuffer is usable in this JVM */
+    private val unsafeAvailable: Boolean by lazy {
+        try {
+            val buffer = org.agrona.concurrent.UnsafeBuffer(ByteArray(1))
+            buffer.getByte(0)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun loadDictionary(inputStream: InputStream): Dictionary {
         val dictionaryParser = DictionaryParser(true)
         val dictionary = dictionaryParser.parse(inputStream, null)
-        val nameCache = Int2ObjectHashMap<Field>()
+        val nameCache = HashMap<Int, Field>()
         val descCache = HashMap<Long, String>()
 
         for ((_, field) in dictionary.fields()) {
-            nameCache.put(field.number(), field)
+            nameCache[field.number()] = field
             field.values()?.forEach { value ->
-                // Pack fieldNumber + value representation into a composite key
                 val key = packKey(field.number(), value.toString())
                 descCache[key] = value.description() ?: ""
             }
@@ -49,15 +50,10 @@ object FixMessageParser {
         return dictionary
     }
 
-    /** Combine field number and value string into a single Long key for small enum values,
-     *  falling back to a hash for longer strings. */
     private fun packKey(fieldNumber: Int, value: String): Long {
         return fieldNumber.toLong().shl(32) or (value.hashCode().toLong() and 0xFFFFFFFFL)
     }
 
-    /**
-     * Detect the delimiter used in the given text.
-     */
     fun detectDelimiter(text: String): DelimiterResult {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) {
@@ -79,9 +75,6 @@ object FixMessageParser {
         return DelimiterResult(DEFAULT_DELIMITER, false)
     }
 
-    /**
-     * Parse a single FIX message.
-     */
     fun parseMessage(text: String, delimiter: Char = DEFAULT_DELIMITER, dictionary: Dictionary? = null): FixMessage {
         if (text.isBlank()) {
             return FixMessage(
@@ -94,47 +87,18 @@ object FixMessageParser {
             )
         }
 
-        val bytes = text.toByteArray(StandardCharsets.US_ASCII)
-        val buffer = MutableAsciiBuffer(bytes)
-        val tags = mutableListOf<FixTag>()
-
-        var offset = 0
-        val length = buffer.capacity()
-        val cache = tagNameCache
-        val descCache = valueDescriptionCache
-        var hasBeginString = false
-        var hasMsgType = false
-
-        while (offset < length) {
-            val equalsIndex = findByte(buffer, offset, length, '='.code.toByte())
-            if (equalsIndex == -1) break
-
-            val tagIdStr = buffer.getAscii(offset, equalsIndex - offset)
-            val tagIdInt = tagIdStr.toIntOrNull() ?: -1
-
-            val delimiterIndex = findByte(buffer, equalsIndex + 1, length, delimiter.code.toByte())
-            val valueEnd = if (delimiterIndex == -1) length else delimiterIndex
-            val value = buffer.getAscii(equalsIndex + 1, valueEnd - (equalsIndex + 1))
-
-            val field = if (tagIdInt != -1) cache?.get(tagIdInt) else null
-            val tagName = field?.name() ?: ""
-
-            val description = if (field != null && descCache != null) {
-                descCache[packKey(field.number(), value)] ?: ""
-            } else ""
-
-            tags.add(FixTag(tagIdStr, tagName, value, description))
-
-            if (tagIdInt == 8) hasBeginString = true
-            else if (tagIdInt == 35) hasMsgType = true
-
-            if (delimiterIndex == -1) break
-            offset = delimiterIndex + 1
+        val tags = if (unsafeAvailable) {
+            parseWithAgrona(text, delimiter)
+        } else {
+            parseWithByteArray(text, delimiter)
         }
+
+        val hasBeginString = tags.any { it.first == 8 }
+        val hasMsgType = tags.any { it.first == 35 }
 
         return FixMessage(
             rawMessage = text,
-            tags = tags,
+            tags = tags.map { it.second },
             delimiter = delimiter,
             isValid = hasBeginString && hasMsgType,
             errorMessage = if (!hasBeginString || !hasMsgType) {
@@ -144,22 +108,115 @@ object FixMessageParser {
         )
     }
 
-    private fun findByte(buffer: AsciiBuffer, start: Int, end: Int, byte: Byte): Int {
-        for (i in start until end) {
-            if (buffer.getByte(i) == byte) return i
+    // =========================================================================
+    // Agrona-based parser (zero-copy, uses UnsafeBuffer)
+    // =========================================================================
+    private fun parseWithAgrona(text: String, delimiter: Char): List<Pair<Int, FixTag>> {
+        val bytes = text.toByteArray(StandardCharsets.US_ASCII)
+        val buffer = uk.co.real_logic.artio.util.MutableAsciiBuffer(bytes)
+        val tags = ArrayList<Pair<Int, FixTag>>(32)
+        val cache = tagNameCache
+        val descCache = valueDescriptionCache
+        val delimByte = delimiter.code.toByte()
+        val eqByte = '='.code.toByte()
+
+        var offset = 0
+        val length = bytes.size
+
+        while (offset < length) {
+            // Find '='
+            var eqIdx = offset
+            while (eqIdx < length && buffer.getByte(eqIdx) != eqByte) eqIdx++
+            if (eqIdx >= length) break
+
+            val tagIdStr = buffer.getAscii(offset, eqIdx - offset)
+            val tagIdInt = parseIntFast(tagIdStr)
+
+            // Find delimiter
+            var delimIdx = eqIdx + 1
+            while (delimIdx < length && buffer.getByte(delimIdx) != delimByte) delimIdx++
+            val value = buffer.getAscii(eqIdx + 1, delimIdx - (eqIdx + 1))
+
+            tags.add(buildTag(tagIdInt, tagIdStr, value, cache, descCache))
+
+            if (delimIdx >= length) break
+            offset = delimIdx + 1
         }
-        return -1
+
+        return tags
     }
 
-    /**
-     * Parse multiple FIX messages.
-     */
+    // =========================================================================
+    // Byte-array parser (no Agrona dependency, still operates on raw bytes)
+    // =========================================================================
+    private fun parseWithByteArray(text: String, delimiter: Char): List<Pair<Int, FixTag>> {
+        val bytes = text.toByteArray(StandardCharsets.US_ASCII)
+        val tags = ArrayList<Pair<Int, FixTag>>(32)
+        val cache = tagNameCache
+        val descCache = valueDescriptionCache
+        val delimByte = delimiter.code.toByte()
+        val eqByte = '='.code.toByte()
+
+        var offset = 0
+        val length = bytes.size
+
+        while (offset < length) {
+            // Find '='
+            var eqIdx = offset
+            while (eqIdx < length && bytes[eqIdx] != eqByte) eqIdx++
+            if (eqIdx >= length) break
+
+            val tagIdStr = String(bytes, offset, eqIdx - offset, StandardCharsets.US_ASCII)
+            val tagIdInt = parseIntFast(tagIdStr)
+
+            // Find delimiter
+            var delimIdx = eqIdx + 1
+            while (delimIdx < length && bytes[delimIdx] != delimByte) delimIdx++
+            val value = String(bytes, eqIdx + 1, delimIdx - (eqIdx + 1), StandardCharsets.US_ASCII)
+
+            tags.add(buildTag(tagIdInt, tagIdStr, value, cache, descCache))
+
+            if (delimIdx >= length) break
+            offset = delimIdx + 1
+        }
+
+        return tags
+    }
+
+    // =========================================================================
+    // Shared helpers
+    // =========================================================================
+
+    /** Fast integer parse — avoids exception overhead for non-numeric tag IDs */
+    private fun parseIntFast(s: String): Int {
+        if (s.isEmpty()) return -1
+        var result = 0
+        for (c in s) {
+            if (c < '0' || c > '9') return -1
+            result = result * 10 + (c - '0')
+        }
+        return result
+    }
+
+    private fun buildTag(
+        tagIdInt: Int, tagIdStr: String, value: String,
+        cache: HashMap<Int, Field>?, descCache: HashMap<Long, String>?
+    ): Pair<Int, FixTag> {
+        val field = if (tagIdInt != -1) cache?.get(tagIdInt) else null
+        val tagName = field?.name() ?: ""
+        val description = if (field != null && descCache != null) {
+            descCache[packKey(field.number(), value)] ?: ""
+        } else ""
+
+        return tagIdInt to FixTag(tagIdStr, tagName, value, description)
+    }
+
     fun parseMessages(text: String, delimiter: Char = DEFAULT_DELIMITER, dictionary: Dictionary? = null): ParsedResult {
         val detected = detectDelimiter(text)
         val actualDelimiter = if (detected.confidence) detected.delimiter else delimiter
         val messages = mutableListOf<FixMessage>()
 
-        val beginStringMatches = Regex("8=FIX[0-9.]+").findAll(text).toList()
+        val beginStringMatches = BEGIN_STRING_REGEX.findAll(text).toList()
         if (beginStringMatches.size <= 1) {
             messages.add(parseMessage(text.trim(), actualDelimiter, dictionary))
         } else {
