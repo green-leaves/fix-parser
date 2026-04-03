@@ -1,5 +1,6 @@
 package io.hermes.fix.plugin
 
+import com.intellij.ide.plugins.newui.UpdateButton
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.Project
@@ -9,7 +10,6 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SideBorder
-import com.intellij.ui.components.JBBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
@@ -80,7 +80,7 @@ class FixParserPanel {
         }
     }
 
-    private val largeMonoFont = Font(Font.MONOSPACED, Font.PLAIN, 14)
+    private val largeMonoFont = Font("Fira Code", Font.PLAIN, 14)
     private val boldFont = JBUI.Fonts.label().deriveFont(Font.BOLD, 14f)
     private val normalFont = JBUI.Fonts.label().deriveFont(14f)
 
@@ -140,7 +140,7 @@ class FixParserPanel {
         }
     }
 
-    private val summaryModel = object : DefaultTableModel(arrayOf("Time", "Sender", "Target", "Message Type", "Summary"), 0) {
+    private val summaryModel = object : DefaultTableModel(arrayOf("Time", "Sender", "Target", "Message Type"), 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
 
@@ -228,9 +228,8 @@ class FixParserPanel {
             }
         }
 
-        // Column widths
-        getColumnModel().getColumn(0).preferredWidth = 65
-        getColumnModel().getColumn(1).preferredWidth = 180
+        // Start with columns filling all space (empty state)
+        autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
     }
 
     private val statusLabel = JBLabel("This data will not leave your computer").apply {
@@ -307,10 +306,8 @@ class FixParserPanel {
             add(Box.createRigidArea(Dimension(20, 0)))
             add(statusLabel)
             add(Box.createRigidArea(Dimension(20, 0)))
-            add(JButton("Parse").apply {
-                font = boldFont
-                background = ACCENT_BLUE
-                setOpaque(true)
+            add(UpdateButton().apply {
+                text = "Parse"
                 putClientProperty("JButton.buttonType", "textured")
                 addActionListener { performParse() }
             })
@@ -342,7 +339,7 @@ class FixParserPanel {
             parsedResult?.let { result ->
                 summaryModel.rowCount = 0
                 result.messages.forEach { msg ->
-                    summaryModel.addRow(arrayOf(msg.time, msg.sender, msg.target, msg.msgType, ""))
+                    summaryModel.addRow(arrayOf(msg.time, msg.sender, msg.target, msg.msgType))
                 }
 
                 // Update count in header
@@ -361,6 +358,7 @@ class FixParserPanel {
         val selected = summaryTable.selectedRow
         if (selected < 0) {
             detailsModel.rowCount = 0
+            detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
             return
         }
 
@@ -369,13 +367,49 @@ class FixParserPanel {
             msg.tags.forEach { tag ->
                 detailsModel.addRow(arrayOf(tag.tagId, tag.tagName, tag.value))
             }
+            // Resize columns to fit content
+            resizeColumnsToFit()
         }
+    }
+
+    private fun resizeColumnsToFit() {
+        // Switch to fixed-width mode so columns fit content
+        detailsTable.autoResizeMode = JTable.AUTO_RESIZE_OFF
+
+        val columnCount = detailsTable.columnCount
+        val lastColIndex = columnCount - 1
+        var contentWidth = 0
+
+        // Calculate width for first (columnCount - 1) columns
+        for (col in 0 until lastColIndex) {
+            val column = detailsTable.columnModel.getColumn(col)
+            var maxWidth = column.headerRenderer?.getTableCellRendererComponent(
+                detailsTable, column.headerValue, false, false, 0, col
+            )?.preferredSize?.width ?: 0
+
+            for (row in 0 until detailsTable.rowCount) {
+                val cellRenderer = detailsTable.getCellRenderer(row, col)
+                val cellValue = detailsTable.getValueAt(row, col)
+                val rendererComponent = cellRenderer.getTableCellRendererComponent(
+                    detailsTable, cellValue, false, false, row, col
+                )
+                maxWidth = maxOf(maxWidth, rendererComponent.preferredSize.width)
+            }
+            column.preferredWidth = maxWidth + 20
+            contentWidth += column.preferredWidth
+        }
+
+        // Last column fills remaining width
+        val tableWidth = detailsTable.parent?.let { (it as? JViewport)?.width } ?: detailsTable.width
+        val remainingWidth = maxOf(tableWidth - contentWidth, 200)
+        detailsTable.columnModel.getColumn(lastColIndex).preferredWidth = remainingWidth
     }
 
     private fun clearAll() {
         inputArea.text = ""
         summaryModel.rowCount = 0
         detailsModel.rowCount = 0
+        detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         parsedResult = null
 
         // Reset count in header

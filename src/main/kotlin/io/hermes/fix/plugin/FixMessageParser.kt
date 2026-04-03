@@ -21,20 +21,38 @@ object FixMessageParser {
     private val ALTERNATIVE_DELIMITERS = listOf('|', '\t', '^', ',')
 
 
-    private lateinit var tagNameCache: Int2ObjectHashMap<Field>
+    private var tagNameCache: Int2ObjectHashMap<Field>? = null
+
+    /** Pre-built lookup: (fieldNumber, enumRepresentation) -> description */
+    private var valueDescriptionCache: HashMap<Long, String>? = null
+
     /**
      * Loads a dictionary from an XML stream.
      */
     fun loadDictionary(inputStream: InputStream): Dictionary {
-        // Correcting use of DictionaryParser (Artio core IR package)
-        val dictionaryParser = DictionaryParser(true);
-        val dictionary = dictionaryParser.parse(inputStream, null);
-        tagNameCache = Int2ObjectHashMap()
+        val dictionaryParser = DictionaryParser(true)
+        val dictionary = dictionaryParser.parse(inputStream, null)
+        val nameCache = Int2ObjectHashMap<Field>()
+        val descCache = HashMap<Long, String>()
+
         for ((_, field) in dictionary.fields()) {
-            tagNameCache.put(field.number(), field)
+            nameCache.put(field.number(), field)
+            field.values()?.forEach { value ->
+                // Pack fieldNumber + value representation into a composite key
+                val key = packKey(field.number(), value.toString())
+                descCache[key] = value.description() ?: ""
+            }
         }
+        tagNameCache = nameCache
+        valueDescriptionCache = descCache
 
         return dictionary
+    }
+
+    /** Combine field number and value string into a single Long key for small enum values,
+     *  falling back to a hash for longer strings. */
+    private fun packKey(fieldNumber: Int, value: String): Long {
+        return fieldNumber.toLong().shl(32) or (value.hashCode().toLong() and 0xFFFFFFFFL)
     }
 
     /**
@@ -82,6 +100,10 @@ object FixMessageParser {
 
         var offset = 0
         val length = buffer.capacity()
+        val cache = tagNameCache
+        val descCache = valueDescriptionCache
+        var hasBeginString = false
+        var hasMsgType = false
 
         while (offset < length) {
             val equalsIndex = findByte(buffer, offset, length, '='.code.toByte())
@@ -94,20 +116,21 @@ object FixMessageParser {
             val valueEnd = if (delimiterIndex == -1) length else delimiterIndex
             val value = buffer.getAscii(equalsIndex + 1, valueEnd - (equalsIndex + 1))
 
-            val field = if (tagIdInt != -1) tagNameCache.get(tagIdInt) else null
+            val field = if (tagIdInt != -1) cache?.get(tagIdInt) else null
             val tagName = field?.name() ?: ""
 
-            // Artio IR Field getValueDescription is not available, we use values() mapping
-            val description = field?.values()?.find { it.toString() == value }?.description() ?: ""
+            val description = if (field != null && descCache != null) {
+                descCache[packKey(field.number(), value)] ?: ""
+            } else ""
 
             tags.add(FixTag(tagIdStr, tagName, value, description))
+
+            if (tagIdInt == 8) hasBeginString = true
+            else if (tagIdInt == 35) hasMsgType = true
 
             if (delimiterIndex == -1) break
             offset = delimiterIndex + 1
         }
-
-        val hasBeginString = tags.any { it.tagId == "8" }
-        val hasMsgType = tags.any { it.tagId == "35" }
 
         return FixMessage(
             rawMessage = text,
@@ -136,12 +159,12 @@ object FixMessageParser {
         val actualDelimiter = if (detected.confidence) detected.delimiter else delimiter
         val messages = mutableListOf<FixMessage>()
 
-        val beginStringMatches = Regex("8=FIX[0-9.]+").findAll(text)
-        if (beginStringMatches.count() <= 1) {
+        val beginStringMatches = Regex("8=FIX[0-9.]+").findAll(text).toList()
+        if (beginStringMatches.size <= 1) {
             messages.add(parseMessage(text.trim(), actualDelimiter, dictionary))
         } else {
             val splitPoints = mutableListOf<Int>()
-            beginStringMatches.forEach { match ->
+            for (match in beginStringMatches) {
                 if (match.range.first > 0) splitPoints.add(match.range.first)
             }
 
