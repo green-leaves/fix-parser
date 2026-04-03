@@ -43,14 +43,14 @@ class FixParserPanel {
     // ============================================================
     companion object {
         val ACCENT_BLUE = JBColor(
-            Color(173, 214, 255),
-            Color(33, 66, 131)
+            Color(0xADD6FF),
+            Color(0x214283)
         )
 
         // Theme-aware stripe colors
         fun stripeColor() = JBColor(
-            Color(255, 255, 255),
-            Color(36, 36, 30)
+            Color(0xEDF3FB),
+            Color(0x313335)
         )
 
         const val CUSTOM_DICTIONARY_LABEL = "Custom..."
@@ -152,15 +152,15 @@ class FixParserPanel {
         chooser.choose(null) { files ->
             val vFile = files.firstOrNull() ?: return@choose
             val file = java.io.File(vFile.path)
-            filePathLabel.text = file.absolutePath
-            filePathLabel.foreground = JBUI.CurrentTheme.Label.foreground()
+            filePathField.text = file.absolutePath
+            filePathField.foreground = JBUI.CurrentTheme.Label.foreground()
             try {
                 val content = file.readText()
                 inputArea.text = content
                 performParse()
             } catch (e: Exception) {
-                filePathLabel.text = "Failed to read: ${file.name}"
-                filePathLabel.foreground = JBColor.RED
+                filePathField.text = "Failed to read: ${file.name}"
+                filePathField.foreground = JBColor.RED
             }
         }
     }
@@ -209,79 +209,59 @@ class FixParserPanel {
         override fun isCellEditable(row: Int, column: Int) = false
     }
 
-    private val summaryTable = JBTable(summaryModel).apply {
-        setShowGrid(false)
-        intercellSpacing = Dimension(0, 0)
-        showHorizontalLines = false
-        showVerticalLines = false
-        setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
-        rowHeight = 28
-        font = largeMonoFont
-        tableHeader.font = boldFont
-        val stripeColor = stripeColor()
-
-        // Color row renderer - using constants
-        setDefaultRenderer(Object::class.java, object : DefaultTableCellRenderer() {
+    private fun createStripedRenderer(): DefaultTableCellRenderer {
+        val stripe = stripeColor()
+        return object : DefaultTableCellRenderer() {
             override fun getTableCellRendererComponent(
                 table: JTable, value: Any?, isSelected: Boolean,
                 hasFocus: Boolean, row: Int, column: Int
             ): Component {
                 val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
                 if (!isSelected) {
-                    c.background = if (row % 2 == 0) table.background else stripeColor
+                    c.background = if (row % 2 == 0) table.background else stripe
                 } else {
                     c.background = ACCENT_BLUE
                 }
                 c.foreground = table.foreground
                 return c
             }
-        })
+        }
+    }
+
+    private fun JBTable.applyCommonStyle() {
+        setShowGrid(false)
+        intercellSpacing = Dimension(0, 0)
+        showHorizontalLines = false
+        showVerticalLines = false
+        setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        rowHeight = 28
+        font = largeMonoFont
+        tableHeader.font = boldFont
+        val renderer = createStripedRenderer()
+        setDefaultRenderer(Object::class.java, renderer)
+        for (colIdx in 0 until columnCount) {
+            getColumnModel().getColumn(colIdx).cellRenderer = renderer
+        }
+    }
+
+    private val summaryTable = JBTable(summaryModel).apply {
+        applyCommonStyle()
     }
 
     private val detailsModel = object : DefaultTableModel(arrayOf("Tag", "Name", "Value"), 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
 
-    private val detailsTable = JBTable(detailsModel).apply {
-        // Clean look - no grid, no borders
-        setShowGrid(false)
-        intercellSpacing = Dimension(0, 0)
-        showHorizontalLines = false
-        showVerticalLines = false
-        border = null
-        font = largeMonoFont
-        rowHeight = 28
-        tableHeader.font = boldFont
-        emptyText.text = "No data available"
-        setRowSelectionAllowed(true)
-        setColumnSelectionAllowed(false)
-        setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
-
-        // Theme-aware stripe color using constants
-        val stripeColor = stripeColor()
-
-        for (colIdx in 0 until columnCount) {
-            val column = getColumnModel().getColumn(colIdx)
-
-            column.cellRenderer = object : DefaultTableCellRenderer() {
-                override fun getTableCellRendererComponent(
-                    table: JTable, value: Any?, isSelected: Boolean,
-                    hasFocus: Boolean, row: Int, col: Int
-                ): Component {
-                    val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, col)
-                    if (!isSelected) {
-                        c.background = if (row % 2 == 0) table.background else stripeColor
-                    } else {
-                        c.background = ACCENT_BLUE
-                    }
-                    c.foreground = table.foreground
-                    (c as? JLabel)?.horizontalAlignment = JLabel.LEFT
-                    return c
-                }
-            }
+    private val detailsTable = object : JBTable(detailsModel) {
+        override fun scrollRectToVisible(rect: Rectangle) {
+            rect.x = 0
+            rect.width = 0
+            super.scrollRectToVisible(rect)
         }
-
-        // Start with columns filling all space (empty state)
+    }.apply {
+        applyCommonStyle()
+        border = null
+        emptyText.text = "No data available"
         autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
     }
 
@@ -293,9 +273,10 @@ class FixParserPanel {
         background = JBUI.CurrentTheme.EditorTabs.background()
     }
 
-    private val filePathLabel = JBLabel("No file selected").apply {
+    private val filePathField = JTextField("No file selected").apply {
         font = normalFont
-        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        isEditable = false
+        columns = 40
     }
 
     private val browseBar = JPanel(FlowLayout(FlowLayout.LEFT, 5, 3)).apply {
@@ -304,7 +285,7 @@ class FixParserPanel {
             putClientProperty("JButton.buttonType", "textured")
             addActionListener { browseForFixFile() }
         })
-        add(filePathLabel)
+        add(filePathField)
     }
 
     private lateinit var rightTabs: JBTabbedPane
@@ -335,6 +316,7 @@ class FixParserPanel {
         val inputPanel = JPanel(BorderLayout()).apply {
             add(browseBar, BorderLayout.NORTH)
             add(JBScrollPane(inputArea).apply {
+                setRowHeaderView(LineNumberGutter(inputArea))
                 border = SideBorder(JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground(), SideBorder.BOTTOM)
             }, BorderLayout.CENTER)
         }
@@ -349,9 +331,9 @@ class FixParserPanel {
             add(JBLabel("Messages").apply { font = boldFont })
             add(JBLabel("0").apply {
                 font = normalFont
-                foreground = JBUI.CurrentTheme.Label.disabledForeground()
+                foreground = JBUI.CurrentTheme.Link.Foreground.ENABLED
+                isVisible = false
             })
-            add(JBLabel("Filters").apply { font = normalFont; foreground = Color(25, 118, 210) })
         }
         leftPanel.add(leftHeader, BorderLayout.NORTH)
         leftPanel.add(JBScrollPane(summaryTable), BorderLayout.CENTER)
@@ -417,7 +399,10 @@ class FixParserPanel {
                 }
 
                 // Update count in header
-                getLeftHeaderCountLabel()?.text = result.messages.size.toString()
+                getLeftHeaderCountLabel()?.let { label ->
+                    label.text = result.messages.size.toString()
+                    label.isVisible = result.messages.isNotEmpty()
+                }
 
                 if (summaryTable.rowCount > 0) {
                     summaryTable.setRowSelectionInterval(0, 0)
@@ -490,12 +475,12 @@ class FixParserPanel {
         detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         rawTextArea.text = ""
         rightTabs.setTitleAt(0, "Fields")
-        filePathLabel.text = "No file selected"
-        filePathLabel.foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        filePathField.text = "No file selected"
+        filePathField.foreground = JBUI.CurrentTheme.Label.disabledForeground()
         parsedResult = null
 
         // Reset count in header
-        getLeftHeaderCountLabel()?.text = "0"
+        getLeftHeaderCountLabel()?.isVisible = false
     }
 
     // Reset count in header
