@@ -3,6 +3,8 @@ package io.hermes.fix.plugin
 import com.intellij.ide.plugins.newui.UpdateButton
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.wm.ToolWindow
@@ -17,6 +19,8 @@ import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import java.awt.*
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
@@ -38,31 +42,18 @@ class FixParserPanel {
     // Color Palette - Theme-aware constants
     // ============================================================
     companion object {
-        // Primary accent - Theme-aware (Indigo)
-        val ACCENT_TEAL = JBColor(
-            Color(51, 72, 107),    // Light mode
-            Color(80, 130, 180)    // Dark mode
-        )
         val ACCENT_BLUE = JBColor(
-            Color(25, 118, 210),    // Light mode
-            Color(25, 118, 210)    // Dark mode
+            Color(173, 214, 255),
+            Color(33, 66, 131)
         )
-
-        // Message type colors (semantic - same in both modes)
-        val ORDER_GREEN = Color(34, 139, 34)
-        val ORDER_BG = Color(232, 245, 233)
-        val EXEC_BLUE = Color(65, 105, 225)
-        val EXEC_BG = Color(227, 242, 253)
-        val LOGON_AMBER = Color(200, 130, 0)
-        val LOGON_BG = Color(255, 248, 230)
-        val REJECT_RED = Color(180, 40, 40)
-        val REJECT_BG = Color(255, 240, 240)
 
         // Theme-aware stripe colors
         fun stripeColor() = JBColor(
-            Color(80, 187, 234),  // Light mode
-            Color(36, 36, 36)      // Dark mode
+            Color(255, 255, 255),
+            Color(36, 36, 30)
         )
+
+        const val CUSTOM_DICTIONARY_LABEL = "Custom..."
     }
 
     // ============================================================
@@ -80,14 +71,30 @@ class FixParserPanel {
         }
     }
 
-    private val largeMonoFont = Font("Fira Code", Font.PLAIN, 14)
+    private val largeMonoFont = Font("Segoe UI", Font.PLAIN, 14)
     private val boldFont = JBUI.Fonts.label().deriveFont(Font.BOLD, 14f)
     private val normalFont = JBUI.Fonts.label().deriveFont(14f)
 
+    /** Path to user-selected custom dictionary file */
+    private var customDictionaryPath: java.io.File? = null
+
+    /** Previous selection before "Custom..." was picked (for cancel fallback) */
+    private var previousSelection: String? = null
+
     /** FIX version dropdown */
-    private val fixVersionCombo = ComboBox(FixSpecVersion.entries.map { it.displayName }.toTypedArray()).apply {
+    private val fixVersionCombo: ComboBox<String> = ComboBox(
+        (FixSpecVersion.entries.map { it.displayName } + CUSTOM_DICTIONARY_LABEL).toTypedArray()
+    ).apply {
         font = normalFont
-        addActionListener { reloadDictionary() }
+        addActionListener {
+            val selected = selectedItem as? String ?: return@addActionListener
+            if (selected == CUSTOM_DICTIONARY_LABEL) {
+                browseForDictionary()
+            } else {
+                previousSelection = selected
+                reloadDictionary()
+            }
+        }
     }
 
     /** Current loaded dictionary */
@@ -96,6 +103,7 @@ class FixParserPanel {
     /** Map of FIX spec version to resource path */
     enum class FixSpecVersion(val displayName: String, val resourcePath: String) {
         FIX_4_4("FIX 4.4", "/spec/FIX44.xml"),
+        FIX_4_3("FIX 4.3", "/spec/FIX43.xml"),
         FIX_4_2("FIX 4.2", "/spec/FIX42.xml"),
         FIX_4_1("FIX 4.1", "/spec/FIX41.xml"),
         FIX_4_0("FIX 4.0", "/spec/FIX40.xml"),
@@ -104,10 +112,70 @@ class FixParserPanel {
         FIX_5_0_SP2("FIX 5.0 SP2", "/spec/FIX50SP2.xml")
     }
 
+    private fun browseForDictionary() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("xml")
+            .withTitle("Select FIX Dictionary XML")
+        val chooser = FileChooserFactory.getInstance().createPathChooser(descriptor, null, null)
+        chooser.choose(null) { files ->
+            val vFile = files.firstOrNull()
+            if (vFile != null) {
+                val file = java.io.File(vFile.path)
+                customDictionaryPath = file
+                // Replace "Custom..." label with the file name
+                val customLabel = file.name
+                fixVersionCombo.removeItemAt(fixVersionCombo.itemCount - 1)
+                fixVersionCombo.addItem(customLabel)
+                fixVersionCombo.addItem(CUSTOM_DICTIONARY_LABEL)
+                fixVersionCombo.selectedItem = customLabel
+                previousSelection = customLabel
+                loadCustomDictionary(file)
+            } else {
+                // User cancelled — revert to previous selection
+                fixVersionCombo.selectedItem = previousSelection ?: FixSpecVersion.entries.first().displayName
+            }
+        }
+    }
+
+    private fun loadCustomDictionary(file: java.io.File) {
+        currentDictionary = try {
+            file.inputStream().use { FixMessageParser.loadDictionary(it) }
+        } catch (e: Exception) {
+            statusLabel.text = "Failed to load: ${file.name}"
+            null
+        }
+    }
+
+    private fun browseForFixFile() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle("Select FIX Message File")
+        val chooser = FileChooserFactory.getInstance().createPathChooser(descriptor, null, null)
+        chooser.choose(null) { files ->
+            val vFile = files.firstOrNull() ?: return@choose
+            val file = java.io.File(vFile.path)
+            filePathLabel.text = file.absolutePath
+            filePathLabel.foreground = JBUI.CurrentTheme.Label.foreground()
+            try {
+                val content = file.readText()
+                inputArea.text = content
+                performParse()
+            } catch (e: Exception) {
+                filePathLabel.text = "Failed to read: ${file.name}"
+                filePathLabel.foreground = JBColor.RED
+            }
+        }
+    }
+
     private fun reloadDictionary() {
         val selectedVersion = fixVersionCombo.selectedItem as? String ?: return
-        val specVersion = FixSpecVersion.entries.find { it.displayName == selectedVersion }
+        if (selectedVersion == CUSTOM_DICTIONARY_LABEL) return
 
+        // Check if it's a custom file name
+        if (customDictionaryPath != null && selectedVersion == customDictionaryPath!!.name) {
+            loadCustomDictionary(customDictionaryPath!!)
+            return
+        }
+
+        val specVersion = FixSpecVersion.entries.find { it.displayName == selectedVersion }
         currentDictionary = specVersion?.let { version ->
             try {
                 FixParserToolWindowFactory::class.java.getResourceAsStream(version.resourcePath)?.let { stream ->
@@ -122,22 +190,19 @@ class FixParserPanel {
     private val inputArea = JTextArea(10, 80).apply {
         font = largeMonoFont
         margin = JBUI.insets(10)
+        lineWrap = true
         background = JBUI.CurrentTheme.EditorTabs.background()
 
-        // Auto-parse on paste
-        transferHandler = object : TransferHandler("text") {
-            override fun importData(transferred: TransferHandler.TransferSupport): Boolean {
-                val result = super.importData(transferred)
-                if (result) {
-                    SwingUtilities.invokeLater {
-                        if (text.isNotBlank()) {
-                            performParse()
-                        }
-                    }
+        // Auto-parse when text is inserted (covers paste, drop, etc.)
+        document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) {
+                SwingUtilities.invokeLater {
+                    if (text.isNotBlank()) performParse()
                 }
-                return result
             }
-        }
+            override fun removeUpdate(e: DocumentEvent) {}
+            override fun changedUpdate(e: DocumentEvent) {}
+        })
     }
 
     private val summaryModel = object : DefaultTableModel(arrayOf("Time", "Sender", "Target", "Message Type"), 0) {
@@ -146,11 +211,14 @@ class FixParserPanel {
 
     private val summaryTable = JBTable(summaryModel).apply {
         setShowGrid(false)
+        intercellSpacing = Dimension(0, 0)
+        showHorizontalLines = false
+        showVerticalLines = false
         setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
         rowHeight = 28
-        font = normalFont
+        font = largeMonoFont
         tableHeader.font = boldFont
-        isStriped = true
+        val stripeColor = stripeColor()
 
         // Color row renderer - using constants
         setDefaultRenderer(Object::class.java, object : DefaultTableCellRenderer() {
@@ -160,19 +228,11 @@ class FixParserPanel {
             ): Component {
                 val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
                 if (!isSelected) {
-                    val msgType = table.getValueAt(row, 3) as? String ?: ""
-                    c.background = when {
-                        msgType.contains("Order") -> ORDER_BG
-                        msgType.contains("Execution") -> EXEC_BG
-                        msgType.contains("Logon") || msgType.contains("Logout") -> LOGON_BG
-                        msgType.contains("Reject") -> REJECT_BG
-                        else -> table.background
-                    }
-                    c.foreground = table.foreground
+                    c.background = if (row % 2 == 0) table.background else stripeColor
                 } else {
-                    c.background = ACCENT_TEAL
-                    c.foreground = Color.WHITE
+                    c.background = ACCENT_BLUE
                 }
+                c.foreground = table.foreground
                 return c
             }
         })
@@ -202,7 +262,6 @@ class FixParserPanel {
 
         for (colIdx in 0 until columnCount) {
             val column = getColumnModel().getColumn(colIdx)
-            val isTagColumnFinal = colIdx == 0
 
             column.cellRenderer = object : DefaultTableCellRenderer() {
                 override fun getTableCellRendererComponent(
@@ -212,16 +271,10 @@ class FixParserPanel {
                     val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, col)
                     if (!isSelected) {
                         c.background = if (row % 2 == 0) table.background else stripeColor
-                        c.foreground = if (isTagColumnFinal) ACCENT_TEAL else table.foreground
-                        font = if (isTagColumnFinal) {
-                            largeMonoFont.deriveFont(Font.BOLD)
-                        } else {
-                            largeMonoFont
-                        }
                     } else {
-                        c.background = ACCENT_TEAL
-                        c.foreground = Color.WHITE
+                        c.background = ACCENT_BLUE
                     }
+                    c.foreground = table.foreground
                     (c as? JLabel)?.horizontalAlignment = JLabel.LEFT
                     return c
                 }
@@ -231,6 +284,30 @@ class FixParserPanel {
         // Start with columns filling all space (empty state)
         autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
     }
+
+    private val rawTextArea = JTextArea().apply {
+        font = largeMonoFont
+        isEditable = false
+        lineWrap = true
+        margin = JBUI.insets(10)
+        background = JBUI.CurrentTheme.EditorTabs.background()
+    }
+
+    private val filePathLabel = JBLabel("No file selected").apply {
+        font = normalFont
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+    }
+
+    private val browseBar = JPanel(FlowLayout(FlowLayout.LEFT, 5, 3)).apply {
+        add(JButton("Browse...").apply {
+            font = boldFont
+            putClientProperty("JButton.buttonType", "textured")
+            addActionListener { browseForFixFile() }
+        })
+        add(filePathLabel)
+    }
+
+    private lateinit var rightTabs: JBTabbedPane
 
     private val statusLabel = JBLabel("This data will not leave your computer").apply {
         icon = com.intellij.icons.AllIcons.General.BalloonInformation
@@ -254,14 +331,13 @@ class FixParserPanel {
     fun getComponent(): JComponent {
         val root = JPanel(BorderLayout())
 
-        // Top: Input tabs
-        val topTabs = JBTabbedPane().apply {
-            font = boldFont
+        // Top: Input panel
+        val inputPanel = JPanel(BorderLayout()).apply {
+            add(browseBar, BorderLayout.NORTH)
+            add(JBScrollPane(inputArea).apply {
+                border = SideBorder(JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground(), SideBorder.BOTTOM)
+            }, BorderLayout.CENTER)
         }
-        topTabs.addTab("Text", JBScrollPane(inputArea).apply {
-            border = SideBorder(JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground(), SideBorder.BOTTOM)
-        })
-        topTabs.addTab("Local file", JPanel())
 
         // Bottom split: Summary & Details
         val splitter = OnePixelSplitter(false, 0.4f)
@@ -282,11 +358,9 @@ class FixParserPanel {
 
         // Right part: Message details
         val rightPanel = JPanel(BorderLayout())
-        val rightTabs = JBTabbedPane().apply { font = boldFont }
-        rightTabs.addTab("Message", JBScrollPane(detailsTable))
-        rightTabs.addTab("Fields", JPanel())
-        rightTabs.addTab("Raw", JPanel())
-        rightTabs.addTab("Issues", JPanel())
+        rightTabs = JBTabbedPane().apply { font = boldFont }
+        rightTabs.addTab("Fields", JBScrollPane(detailsTable))
+        rightTabs.addTab("Raw", JBScrollPane(rawTextArea))
         rightPanel.add(rightTabs, BorderLayout.CENTER)
 
         splitter.firstComponent = leftPanel
@@ -294,7 +368,7 @@ class FixParserPanel {
 
         // Layout assembly
         val mainContent = OnePixelSplitter(true, 0.4f)
-        mainContent.firstComponent = topTabs
+        mainContent.firstComponent = inputPanel
 
         val bottomWrapper = JPanel(BorderLayout())
         val actionBar = JPanel().apply {
@@ -359,6 +433,8 @@ class FixParserPanel {
         if (selected < 0) {
             detailsModel.rowCount = 0
             detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+            rawTextArea.text = ""
+            rightTabs.setTitleAt(0, "Fields")
             return
         }
 
@@ -367,8 +443,10 @@ class FixParserPanel {
             msg.tags.forEach { tag ->
                 detailsModel.addRow(arrayOf(tag.tagId, tag.tagName, tag.value))
             }
-            // Resize columns to fit content
             resizeColumnsToFit()
+            rawTextArea.text = msg.rawMessage
+            rawTextArea.caretPosition = 0
+            rightTabs.setTitleAt(0, "Fields (${msg.tags.size})")
         }
     }
 
@@ -410,6 +488,10 @@ class FixParserPanel {
         summaryModel.rowCount = 0
         detailsModel.rowCount = 0
         detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+        rawTextArea.text = ""
+        rightTabs.setTitleAt(0, "Fields")
+        filePathLabel.text = "No file selected"
+        filePathLabel.foreground = JBUI.CurrentTheme.Label.disabledForeground()
         parsedResult = null
 
         // Reset count in header
