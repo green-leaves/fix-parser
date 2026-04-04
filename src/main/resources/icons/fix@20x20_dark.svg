@@ -1,0 +1,10 @@
+<!-- Dark mode - New UI (20x20) -->
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="10" y="14.5"
+        font-family="'JetBrains Mono', 'Consolas', monospace"
+        font-size="11"
+        font-weight="bold"
+        fill="#CED0D6"
+        text-anchor="middle"
+        letter-spacing="-0.5">FIX</text>
+</svg>

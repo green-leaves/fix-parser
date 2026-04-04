@@ -30,11 +30,11 @@
     <depends>com.intellij.modules.compose</depends>
 
     <depends>com.intellij.java</depends>
-<!--    <resource-bundle>messages.MyMessageBundle</resource-bundle>-->
+    <!-- <resource-bundle>messages.MyMessageBundle</resource-bundle>-->
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Fix Parser" factoryClass="io.hermes.fix.plugin.FixParserToolWindowFactory"
-                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
+                    icon="/icons/fix.svg"/>
     </extensions>
 </idea-plugin>

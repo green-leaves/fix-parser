@@ -244,7 +244,13 @@ class FixParserPanel {
         }
     }
 
-    private val summaryTable = JBTable(summaryModel).apply {
+    private val summaryTable = object : JBTable(summaryModel) {
+        override fun scrollRectToVisible(rect: Rectangle) {
+            rect.x = 0
+            rect.width = 0
+            super.scrollRectToVisible(rect)
+        }
+    }.apply {
         applyCommonStyle()
     }
 
@@ -277,6 +283,10 @@ class FixParserPanel {
         font = normalFont
         isEditable = false
         columns = 40
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) = browseForFixFile()
+        })
     }
 
     private val browseBar = JPanel(FlowLayout(FlowLayout.LEFT, 5, 3)).apply {
@@ -398,6 +408,8 @@ class FixParserPanel {
                     summaryModel.addRow(arrayOf(msg.time, msg.sender, msg.target, msg.msgType))
                 }
 
+                summaryTable.resizeColumnsToFit()
+
                 // Update count in header
                 getLeftHeaderCountLabel()?.let { label ->
                     label.text = result.messages.size.toString()
@@ -428,33 +440,28 @@ class FixParserPanel {
             msg.tags.forEach { tag ->
                 detailsModel.addRow(arrayOf(tag.tagId, tag.tagName, tag.value))
             }
-            resizeColumnsToFit()
+            detailsTable.resizeColumnsToFit()
             rawTextArea.text = msg.rawMessage
             rawTextArea.caretPosition = 0
             rightTabs.setTitleAt(0, "Fields (${msg.tags.size})")
         }
     }
 
-    private fun resizeColumnsToFit() {
-        // Switch to fixed-width mode so columns fit content
-        detailsTable.autoResizeMode = JTable.AUTO_RESIZE_OFF
+    private fun JBTable.resizeColumnsToFit() {
+        autoResizeMode = JTable.AUTO_RESIZE_OFF
 
-        val columnCount = detailsTable.columnCount
         val lastColIndex = columnCount - 1
         var contentWidth = 0
 
-        // Calculate width for first (columnCount - 1) columns
         for (col in 0 until lastColIndex) {
-            val column = detailsTable.columnModel.getColumn(col)
+            val column = columnModel.getColumn(col)
             var maxWidth = column.headerRenderer?.getTableCellRendererComponent(
-                detailsTable, column.headerValue, false, false, 0, col
+                this, column.headerValue, false, false, 0, col
             )?.preferredSize?.width ?: 0
 
-            for (row in 0 until detailsTable.rowCount) {
-                val cellRenderer = detailsTable.getCellRenderer(row, col)
-                val cellValue = detailsTable.getValueAt(row, col)
-                val rendererComponent = cellRenderer.getTableCellRendererComponent(
-                    detailsTable, cellValue, false, false, row, col
+            for (row in 0 until rowCount) {
+                val rendererComponent = getCellRenderer(row, col).getTableCellRendererComponent(
+                    this, getValueAt(row, col), false, false, row, col
                 )
                 maxWidth = maxOf(maxWidth, rendererComponent.preferredSize.width)
             }
@@ -462,10 +469,9 @@ class FixParserPanel {
             contentWidth += column.preferredWidth
         }
 
-        // Last column fills remaining width
-        val tableWidth = detailsTable.parent?.let { (it as? JViewport)?.width } ?: detailsTable.width
+        val tableWidth = parent?.let { (it as? JViewport)?.width } ?: width
         val remainingWidth = maxOf(tableWidth - contentWidth, 200)
-        detailsTable.columnModel.getColumn(lastColIndex).preferredWidth = remainingWidth
+        columnModel.getColumn(lastColIndex).preferredWidth = remainingWidth
     }
 
     private fun clearAll() {
@@ -473,6 +479,7 @@ class FixParserPanel {
         summaryModel.rowCount = 0
         detailsModel.rowCount = 0
         detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+        summaryTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         rawTextArea.text = ""
         rightTabs.setTitleAt(0, "Fields")
         filePathField.text = "No file selected"

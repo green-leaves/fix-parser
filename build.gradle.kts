@@ -27,10 +27,10 @@ dependencies {
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.modules.json")
         bundledPlugin("org.intellij.plugins.markdown")
-
-        implementation("uk.co.real-logic:artio-codecs:0.176")
-        implementation("uk.co.real-logic:artio-core:0.176")
     }
+
+    implementation("uk.co.real-logic:artio-codecs:0.176")
+    implementation("uk.co.real-logic:artio-core:0.176")
 }
 
 intellijPlatform {
@@ -45,13 +45,20 @@ intellijPlatform {
     }
 }
 
+val moduleOpens = listOf(
+    "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
+)
+
 tasks {
     withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask> {
         jvmArgs(
-            "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+            *moduleOpens.toTypedArray(),
             "-Dkotlinx.coroutines.debug=off",
             "-Djdk.module.illegalAccess=permit"
         )
+    }
+    withType<Test> {
+        jvmArgs(*moduleOpens.toTypedArray())
     }
     // Set the JVM compatibility versions
     withType<JavaCompile> {
