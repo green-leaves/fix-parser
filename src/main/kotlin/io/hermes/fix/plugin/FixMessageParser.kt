@@ -6,11 +6,6 @@ import uk.co.real_logic.artio.dictionary.ir.Field
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 
-/**
- * Parser for FIX protocol messages.
- * Auto-detects whether Agrona UnsafeBuffer is available (requires --add-opens JVM arg).
- * Falls back to a high-performance byte-array parser when it's not.
- */
 object FixMessageParser {
 
     const val DEFAULT_DELIMITER = '\u0001'
@@ -19,17 +14,6 @@ object FixMessageParser {
 
     private var tagNameCache: HashMap<Int, Field>? = null
     private var valueDescriptionCache: HashMap<Long, String>? = null
-
-    /** Whether Agrona UnsafeBuffer is usable in this JVM */
-    private val unsafeAvailable: Boolean by lazy {
-        try {
-            val buffer = org.agrona.concurrent.UnsafeBuffer(ByteArray(1))
-            buffer.getByte(0)
-            true
-        } catch (_: Throwable) {
-            false
-        }
-    }
 
     fun loadDictionary(inputStream: InputStream): Dictionary {
         val dictionaryParser = DictionaryParser(true)
@@ -87,11 +71,7 @@ object FixMessageParser {
             )
         }
 
-        val tags = if (unsafeAvailable) {
-            parseWithAgrona(text, delimiter)
-        } else {
-            parseWithByteArray(text, delimiter)
-        }
+        val tags = parseWithByteArray(text, delimiter)
 
         val hasBeginString = tags.any { it.first == 8 }
         val hasMsgType = tags.any { it.first == 35 }
@@ -108,47 +88,6 @@ object FixMessageParser {
         )
     }
 
-    // =========================================================================
-    // Agrona-based parser (zero-copy, uses UnsafeBuffer)
-    // =========================================================================
-    private fun parseWithAgrona(text: String, delimiter: Char): List<Pair<Int, FixTag>> {
-        val bytes = text.toByteArray(StandardCharsets.US_ASCII)
-        val buffer = uk.co.real_logic.artio.util.MutableAsciiBuffer(bytes)
-        val tags = ArrayList<Pair<Int, FixTag>>(32)
-        val cache = tagNameCache
-        val descCache = valueDescriptionCache
-        val delimByte = delimiter.code.toByte()
-        val eqByte = '='.code.toByte()
-
-        var offset = 0
-        val length = bytes.size
-
-        while (offset < length) {
-            // Find '='
-            var eqIdx = offset
-            while (eqIdx < length && buffer.getByte(eqIdx) != eqByte) eqIdx++
-            if (eqIdx >= length) break
-
-            val tagIdStr = buffer.getAscii(offset, eqIdx - offset)
-            val tagIdInt = parseIntFast(tagIdStr)
-
-            // Find delimiter
-            var delimIdx = eqIdx + 1
-            while (delimIdx < length && buffer.getByte(delimIdx) != delimByte) delimIdx++
-            val value = buffer.getAscii(eqIdx + 1, delimIdx - (eqIdx + 1))
-
-            tags.add(buildTag(tagIdInt, tagIdStr, value, cache, descCache))
-
-            if (delimIdx >= length) break
-            offset = delimIdx + 1
-        }
-
-        return tags
-    }
-
-    // =========================================================================
-    // Byte-array parser (no Agrona dependency, still operates on raw bytes)
-    // =========================================================================
     private fun parseWithByteArray(text: String, delimiter: Char): List<Pair<Int, FixTag>> {
         val bytes = text.toByteArray(StandardCharsets.US_ASCII)
         val tags = ArrayList<Pair<Int, FixTag>>(32)
@@ -183,9 +122,6 @@ object FixMessageParser {
         return tags
     }
 
-    // =========================================================================
-    // Shared helpers
-    // =========================================================================
 
     /** Fast integer parse — avoids exception overhead for non-numeric tag IDs */
     private fun parseIntFast(s: String): Int {

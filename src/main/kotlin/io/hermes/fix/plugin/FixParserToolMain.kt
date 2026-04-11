@@ -18,6 +18,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import java.awt.*
+import java.awt.datatransfer.StringSelection
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -54,6 +55,8 @@ class FixParserPanel {
         )
 
         const val CUSTOM_DICTIONARY_LABEL = "Custom..."
+
+        fun csvEscape(s: String) = "\"${s.replace("\"", "\"\"")}\""
     }
 
     // ============================================================
@@ -269,6 +272,47 @@ class FixParserPanel {
         border = null
         emptyText.text = "No data available"
         autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+
+        // Ctrl+C copies the selected cell value
+        val copyCell = object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) {
+                val row = selectedRow; val col = selectedColumn
+                if (row >= 0 && col >= 0) {
+                    Toolkit.getDefaultToolkit().systemClipboard
+                        .setContents(StringSelection(getValueAt(row, col)?.toString() ?: ""), null)
+                }
+            }
+        }
+        getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ctrl C"), "copy-cell")
+        actionMap.put("copy-cell", copyCell)
+
+        // Right-click context menu
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mousePressed(e: java.awt.event.MouseEvent) {
+                if (!SwingUtilities.isRightMouseButton(e)) return
+                val row = rowAtPoint(e.point); val col = columnAtPoint(e.point)
+                if (row < 0 || col < 0) return
+                setRowSelectionInterval(row, row)
+                setColumnSelectionInterval(col, col)
+                JPopupMenu().apply {
+                    add(JMenuItem("Copy Cell").apply {
+                        addActionListener {
+                            Toolkit.getDefaultToolkit().systemClipboard
+                                .setContents(StringSelection(getValueAt(row, col)?.toString() ?: ""), null)
+                        }
+                    })
+                    add(JMenuItem("Copy Row").apply {
+                        addActionListener {
+                            val rowText = (0 until columnCount).joinToString("\t") { c ->
+                                getValueAt(row, c)?.toString() ?: ""
+                            }
+                            Toolkit.getDefaultToolkit().systemClipboard
+                                .setContents(StringSelection(rowText), null)
+                        }
+                    })
+                }.show(this@apply, e.x, e.y)
+            }
+        })
     }
 
     private val rawTextArea = JTextArea().apply {
@@ -351,7 +395,57 @@ class FixParserPanel {
         // Right part: Message details
         val rightPanel = JPanel(BorderLayout())
         rightTabs = JBTabbedPane().apply { font = boldFont }
-        rightTabs.addTab("Fields", JBScrollPane(detailsTable))
+        val copyCsvButton = JButton("Copy CSV").apply {
+            font = boldFont
+            putClientProperty("JButton.buttonType", "textured")
+            addActionListener {
+                if (detailsModel.rowCount == 0) return@addActionListener
+                val csv = buildString {
+                    for (row in 0 until detailsModel.rowCount) {
+                        append(csvEscape(detailsModel.getValueAt(row, 0)?.toString() ?: ""))
+                        append(",")
+                        append(csvEscape(detailsModel.getValueAt(row, 1)?.toString() ?: ""))
+                        append(",")
+                        append(csvEscape(detailsModel.getValueAt(row, 2)?.toString() ?: ""))
+                        append("\n")
+                    }
+                }
+                Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(csv), null)
+                text = "Copied!"
+                isEnabled = false
+                Timer(500) { text = "Copy CSV"; isEnabled = true }.apply { isRepeats = false; start() }
+            }
+        }
+        val copyTableButton = JButton("Copy").apply {
+            font = boldFont
+            putClientProperty("JButton.buttonType", "textured")
+            addActionListener {
+                if (detailsModel.rowCount == 0) return@addActionListener
+                val tsv = buildString {
+                    append("Tag\tName\tValue\n")
+                    for (row in 0 until detailsModel.rowCount) {
+                        append(detailsModel.getValueAt(row, 0)?.toString() ?: "")
+                        append("\t")
+                        append(detailsModel.getValueAt(row, 1)?.toString() ?: "")
+                        append("\t")
+                        append(detailsModel.getValueAt(row, 2)?.toString() ?: "")
+                        append("\n")
+                    }
+                }
+                Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(tsv), null)
+                text = "Copied!"
+                isEnabled = false
+                Timer(500) { text = "Copy"; isEnabled = true }.apply { isRepeats = false; start() }
+            }
+        }
+        val fieldsPanel = JPanel(BorderLayout()).apply {
+            add(JBScrollPane(detailsTable), BorderLayout.CENTER)
+            add(JPanel(FlowLayout(FlowLayout.RIGHT, 5, 2)).apply {
+                add(copyTableButton)
+                add(copyCsvButton)
+            }, BorderLayout.SOUTH)
+        }
+        rightTabs.addTab("Fields", fieldsPanel)
         rightTabs.addTab("Raw", JBScrollPane(rawTextArea))
         rightPanel.add(rightTabs, BorderLayout.CENTER)
 

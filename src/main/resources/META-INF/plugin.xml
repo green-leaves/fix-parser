@@ -5,7 +5,7 @@
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>Fix Parser</name>
+    <name>FIX Parser</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
     <vendor url="https://github.com/green-leaves">green-leaves</vendor>
@@ -27,14 +27,12 @@
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
-    <depends>com.intellij.modules.compose</depends>
-
     <depends>com.intellij.java</depends>
     <!-- <resource-bundle>messages.MyMessageBundle</resource-bundle>-->
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Fix Parser" factoryClass="io.hermes.fix.plugin.FixParserToolWindowFactory"
+        <toolWindow id="FIX Parser" factoryClass="io.hermes.fix.plugin.FixParserToolWindowFactory"
                     icon="/icons/fix.svg"/>
     </extensions>
 </idea-plugin>
