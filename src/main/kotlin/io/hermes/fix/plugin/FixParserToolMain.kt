@@ -15,7 +15,11 @@ import com.intellij.ui.SideBorder
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.table.JBTable
+import com.intellij.ui.components.fields.ExtendableTextField
+import com.intellij.ui.components.fields.ExtendableTextComponent
 import com.intellij.util.ui.JBUI
 import java.awt.*
 import java.awt.datatransfer.StringSelection
@@ -24,6 +28,7 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
+import javax.swing.table.TableRowSorter
 
 class FixParserToolWindowFactory : ToolWindowFactory {
 
@@ -212,6 +217,13 @@ class FixParserPanel {
         override fun isCellEditable(row: Int, column: Int) = false
     }
 
+    private val sorter = TableRowSorter(summaryModel)
+
+    private val messageCountLabel = JBLabel("").apply {
+        font = normalFont
+        foreground = JBUI.CurrentTheme.Link.Foreground.ENABLED
+    }
+
     private fun createStripedRenderer(): DefaultTableCellRenderer {
         val stripe = stripeColor()
         return object : DefaultTableCellRenderer() {
@@ -352,8 +364,62 @@ class FixParserPanel {
 
     private var parsedResult: ParsedResult? = null
 
+    private var regexEnabled = false
+    private var negateEnabled = false
+
+    private val defaultFilterBg: Color by lazy { filterField.background }
+
+    private val filterField = ExtendableTextField().apply {
+        font = normalFont
+        emptyText.text = "Filter messages..."
+
+        // Left: magnifying glass (static)
+        addExtension(object : ExtendableTextComponent.Extension {
+            override fun getIcon(hovered: Boolean) = AllIcons.Actions.Search
+            override fun isIconBeforeText() = true
+            override fun getActionOnClick() = null
+        })
+
+        // Right: regex toggle (.*)
+        addExtension(object : ExtendableTextComponent.Extension {
+            override fun getIcon(hovered: Boolean) =
+                if (regexEnabled) AllIcons.Actions.Regex
+                else IconLoader.getDisabledIcon(AllIcons.Actions.Regex)
+            override fun isIconBeforeText() = false
+            override fun getActionOnClick() = Runnable {
+                regexEnabled = !regexEnabled
+                applyFilter()
+                this@apply.repaint()
+            }
+        })
+
+        // Right: negate toggle (!)
+        addExtension(object : ExtendableTextComponent.Extension {
+            override fun getIcon(hovered: Boolean) =
+                if (negateEnabled) AllIcons.General.ExclMark
+                else IconLoader.getDisabledIcon(AllIcons.General.ExclMark)
+            override fun isIconBeforeText() = false
+            override fun getActionOnClick() = Runnable {
+                negateEnabled = !negateEnabled
+                applyFilter()
+                this@apply.repaint()
+            }
+        })
+
+        document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = applyFilter()
+            override fun removeUpdate(e: DocumentEvent) = applyFilter()
+            override fun changedUpdate(e: DocumentEvent) {}
+        })
+        getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ESCAPE"), "clear-filter")
+        actionMap.put("clear-filter", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) { text = "" }
+        })
+    }
+
     // Start Here?
     init {
+        summaryTable.rowSorter = sorter
         summaryTable.selectionModel.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 updateDetails()
@@ -380,13 +446,19 @@ class FixParserPanel {
 
         // Left part: Messages list
         val leftPanel = JPanel(BorderLayout())
-        val leftHeader = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            border = JBUI.Borders.empty(5, 10)
-            add(JBLabel("Messages").apply { font = boldFont })
-            add(JBLabel("0").apply {
-                font = normalFont
-                foreground = JBUI.CurrentTheme.Link.Foreground.ENABLED
-                isVisible = false
+        val leftHeader = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            border = JBUI.Borders.empty(4, 10)
+            add(JBLabel("Messages").apply {
+                font = boldFont
+                alignmentY = Component.CENTER_ALIGNMENT
+            })
+            add(Box.createRigidArea(Dimension(6, 0)))
+            add(messageCountLabel.apply { alignmentY = Component.CENTER_ALIGNMENT })
+            add(Box.createRigidArea(Dimension(8, 0)))
+            add(filterField.apply {
+                alignmentY = Component.CENTER_ALIGNMENT
+                maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
             })
         }
         leftPanel.add(leftHeader, BorderLayout.NORTH)
@@ -503,12 +575,7 @@ class FixParserPanel {
                 }
 
                 summaryTable.resizeColumnsToFit()
-
-                // Update count in header
-                getLeftHeaderCountLabel()?.let { label ->
-                    label.text = result.messages.size.toString()
-                    label.isVisible = result.messages.isNotEmpty()
-                }
+                applyFilter()
 
                 if (summaryTable.rowCount > 0) {
                     summaryTable.setRowSelectionInterval(0, 0)
@@ -520,8 +587,8 @@ class FixParserPanel {
     }
 
     private fun updateDetails() {
-        val selected = summaryTable.selectedRow
-        if (selected < 0) {
+        val viewRow = summaryTable.selectedRow
+        if (viewRow < 0) {
             detailsModel.rowCount = 0
             detailsTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
             rawTextArea.text = ""
@@ -529,6 +596,7 @@ class FixParserPanel {
             return
         }
 
+        val selected = summaryTable.convertRowIndexToModel(viewRow)
         parsedResult?.messages?.getOrNull(selected)?.let { msg ->
             detailsModel.rowCount = 0
             msg.tags.forEach { tag ->
@@ -579,18 +647,51 @@ class FixParserPanel {
         filePathField.text = "No file selected"
         filePathField.foreground = JBUI.CurrentTheme.Label.disabledForeground()
         parsedResult = null
-
-        // Reset count in header
-        getLeftHeaderCountLabel()?.isVisible = false
+        filterField.text = ""
+        regexEnabled = false
+        negateEnabled = false
+        filterField.background = defaultFilterBg
+        filterField.repaint()
+        sorter.rowFilter = null
+        messageCountLabel.text = ""
     }
 
-    // Reset count in header
-    private fun getLeftHeaderCountLabel(): JBLabel? {
-        // Safe navigation to count label
-        return try {
-            (((summaryTable.parent as? JViewport)?.parent as? JScrollPane)?.parent as? JPanel)?.let { leftPanel ->
-                (leftPanel.components[0] as? JPanel)?.getComponent(1) as? JBLabel
+    private fun applyFilter() {
+        val text = filterField.text
+        if (text.isBlank()) {
+            filterField.background = defaultFilterBg
+            sorter.rowFilter = null
+            updateCountLabel()
+            return
+        }
+        val matcher: (String) -> Boolean = if (regexEnabled) {
+            val regex = try {
+                Regex(text, RegexOption.IGNORE_CASE)
+            } catch (e: Exception) {
+                filterField.background = JBColor.RED
+                return
             }
-        } catch (e: Exception) { null }
+            filterField.background = defaultFilterBg
+            { raw -> regex.containsMatchIn(raw) }
+        } else {
+            filterField.background = defaultFilterBg
+            { raw -> raw.contains(text, ignoreCase = true) }
+        }
+        val negate = negateEnabled
+        sorter.rowFilter = object : javax.swing.RowFilter<DefaultTableModel, Int>() {
+            override fun include(entry: Entry<out DefaultTableModel, out Int>): Boolean {
+                val raw = parsedResult?.messages?.getOrNull(entry.identifier)?.rawMessage ?: return true
+                val matches = matcher(raw)
+                return if (negate) !matches else matches
+            }
+        }
+        updateCountLabel()
+    }
+
+    private fun updateCountLabel() {
+        val total = parsedResult?.messages?.size ?: 0
+        messageCountLabel.text = if (total == 0) ""
+        else if (sorter.rowFilter == null) "$total"
+        else "${summaryTable.rowCount} / $total"
     }
 }
