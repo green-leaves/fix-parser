@@ -3,6 +3,7 @@ package io.hermes.fix.plugin
 import com.intellij.ide.plugins.newui.UpdateButton
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.project.Project
@@ -38,8 +39,6 @@ class FixParserToolWindowFactory : ToolWindowFactory {
             toolWindow.contentManager.factory.createContent(content.getComponent(), "", false)
         )
     }
-
-    override fun shouldBeAvailable(project: Project): Boolean = true
 }
 
 class FixParserPanel {
@@ -154,7 +153,7 @@ class FixParserPanel {
     }
 
     private fun browseForFixFile() {
-        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
             .withTitle("Select FIX Message File")
         val chooser = FileChooserFactory.getInstance().createPathChooser(descriptor, null, null)
         chooser.choose(null) { files ->

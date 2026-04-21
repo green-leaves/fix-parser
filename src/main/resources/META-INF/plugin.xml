@@ -27,12 +27,13 @@
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>
     <!-- <resource-bundle>messages.MyMessageBundle</resource-bundle>-->
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="FIX Parser" factoryClass="io.hermes.fix.plugin.FixParserToolWindowFactory"
-                    icon="/icons/fix.svg"/>
+                    icon="/icons/fix.svg" doNotActivateOnStart="false"/>
     </extensions>
 </idea-plugin>
