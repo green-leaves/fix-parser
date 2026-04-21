@@ -18,7 +18,6 @@ repositories {
 dependencies {
     intellijPlatform {
         intellijIdea("2025.2.1")
-        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.modules.json")
@@ -26,6 +25,32 @@ dependencies {
     }
 
     implementation("uk.co.real-logic:artio-codecs:0.176")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// IntelliJ Platform plugin's test task runs inside a sandbox and can't discover
+// our JUnit 5 tests — suppress the "no tests found" error
+tasks.named<Test>("test") {
+    failOnNoDiscoveredTests = false
+}
+
+// Unit tests run in a plain JVM — separate from the IntelliJ sandbox test task
+val unitTest by tasks.registering(Test::class) {
+    description = "Runs unit tests without IntelliJ platform"
+    group = "verification"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    // Strip IntelliJ platform JARs — keep only artio, JUnit, kotlin-stdlib, etc.
+    classpath = sourceSets.test.get().runtimeClasspath.filter { file ->
+        val path = file.absolutePath.replace('\\', '/')
+        !path.contains("/ideaIU") &&
+        !path.contains("/idea-sandbox") &&
+        !path.contains("/intellijPlatform/") &&
+        !path.contains("testFramework") &&
+        !path.contains("intellij-platform-test")
+    }
 }
 
 intellijPlatform {
