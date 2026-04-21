@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.hermes.fix"
-version = "1.0.1"
+version = "1.0.2"
 
 repositories {
     mavenCentral()
@@ -66,11 +66,8 @@ intellijPlatform {
 
         changeNotes = """
             <ul>
-                <li>Rename plugin display name to "FIX Parser"</li>
-                <li>Details table: copy individual cell via Ctrl+C or right-click → Copy Cell</li>
-                <li>Details table: right-click → Copy Row (tab-separated)</li>
-                <li>Details table: Copy button (with headers, tab-separated) and Copy CSV button</li>
-                <li>Reduced plugin size by removing unused artio-core dependency</li>
+                <li>Added filter bar to summary table with regex and negate support</li>
+                <li>Fixed deprecated API usages in ToolWindowFactory and FileChooserDescriptor</li>
             </ul>
         """.trimIndent()
     }

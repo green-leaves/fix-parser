@@ -25,6 +25,21 @@
         </ul>
     ]]></description>
 
+    <change-notes><![CDATA[
+        <h3>1.0.2</h3>
+        <ul>
+            <li>Added filter bar to summary table with regex and negate support</li>
+            <li>Fixed deprecated API usages in ToolWindowFactory and FileChooserDescriptor</li>
+        </ul>
+        <h3>1.0.1</h3>
+        <ul>
+            <li>Initial public release</li>
+            <li>Parse FIX messages from text input or local file</li>
+            <li>Support for FIX 4.0 through 5.0 SP2 dictionaries</li>
+            <li>Auto-detection of field delimiters</li>
+        </ul>
+    ]]></change-notes>
+
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
